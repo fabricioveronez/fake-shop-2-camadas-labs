@@ -1,0 +1,19 @@
+{
+  "name": "fake-shop-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Suíte Playwright que descreve o comportamento da loja. Roda contra o monolito Flask (baseline) e contra o monorepo novo.",
+  "scripts": {
+    "test": "playwright test",
+    "test:legacy": "E2E_TARGET=legacy E2E_BASE_URL=http://localhost:5000 playwright test",
+    "ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "codegen": "playwright codegen"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}

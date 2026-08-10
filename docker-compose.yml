@@ -1,0 +1,106 @@
+# Ambiente de desenvolvimento — é o único que existe neste projeto.
+#
+#   cp .env.example .env    # defina DB_PASSWORD
+#   docker compose up       # http://localhost:5173
+#
+# A API recarrega ao salvar (uvicorn --reload) e o front tem HMR (Vite). O SPA
+# chama `/api` relativo, e o proxy do Vite encaminha para a API — mesma origem,
+# então CORS não entra em jogo.
+
+name: fake-shop
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      # Exposto para acessar com psql, DBeaver ou o script de reset.
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER} -d ${DB_NAME}']
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  # Serviço one-shot: aplica as migrations e semeia o catálogo antes de a API
+  # subir. Fica separado do entrypoint da API porque, com réplicas, N
+  # containers rodando `alembic upgrade head` ao mesmo tempo disputam lock —
+  # e é o padrão que vira initContainer/Job no Kubernetes.
+  api-migrate:
+    build:
+      context: ./apps/api
+      target: dev
+    command: ['sh', '-c', 'alembic upgrade head && python -m app.seed']
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    volumes:
+      - ./apps/api/app:/app/app:ro
+      - ./apps/api/migrations:/app/migrations:ro
+      - ./apps/api/static:/app/static:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: ./apps/api
+      target: dev
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      MEDIA_BASE_URL: ${MEDIA_BASE_URL:-/static/products}
+      SHIPPING_FEE: ${SHIPPING_FEE:-10.00}
+      ENVIRONMENT: dev
+    volumes:
+      # Leitura e escrita: `make revision` grava a migration nova aqui, e é o
+      # arquivo do repositório que precisa aparecer.
+      - ./apps/api/app:/app/app
+      - ./apps/api/migrations:/app/migrations
+      - ./apps/api/tests:/app/tests
+      - ./apps/api/pyproject.toml:/app/pyproject.toml:ro
+      - ./apps/api/static:/app/static:ro
+    ports:
+      # Direto na API: /docs e /metrics. O caminho do usuário é a 5173.
+      - '8000:8000'
+    depends_on:
+      api-migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ./apps/web
+      target: dev
+    environment:
+      # Dentro do compose o alvo do proxy é o serviço `api`, não localhost.
+      VITE_PROXY_TARGET: http://api:8000
+      # Bind mount no macOS e no Windows não propaga eventos de inotify, então
+      # o watcher precisa de polling para o HMR funcionar.
+      VITE_USE_POLLING: 'true'
+    volumes:
+      - ./apps/web:/app
+      # Volume anônimo preserva o node_modules da imagem, que o mount acima
+      # esconderia. Depois de mexer no package.json:
+      #   docker compose down -v && docker compose up --build
+      - /app/node_modules
+    ports:
+      - '5173:5173'
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,18 @@
+{
+  "$comment": [
+    "Advisories aceitos conscientemente, com a razão registrada.",
+    "Não é lugar para silenciar achado incômodo: cada entrada precisa de um",
+    "motivo verificável e de uma condição de saída. Sem entrada aqui, o",
+    "`npm run audit:ci` falha.",
+    "Rode `npm audit` para ver o relatório completo, incluindo estes."
+  ],
+  "allow": [
+    {
+      "id": "GHSA-qwww-vcr4-c8h2",
+      "package": "react-router",
+      "title": "RSC Mode CSRF Bypass Allows Action Execution Before 400 Response",
+      "reason": "Afeta apenas o modo RSC (React Server Components) e server actions. Esta app é um SPA Vite com BrowserRouter: não há servidor React, não há action, e o roteamento é todo client-side. Não existe versão corrigida no 7.x — a faixa afetada (7.12.0–8.2.0) engloba todas as versões publicadas, e voltar para 7.11.0 traria 14 advisories que de fato se aplicam.",
+      "revisit": "Remover assim que sair uma versão acima de 8.2.0."
+    }
+  ]
+}

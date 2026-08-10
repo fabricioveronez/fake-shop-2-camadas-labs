@@ -1,0 +1,205 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ecommerce
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: ecommerce
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ecommerce -d ecommerce"
+          --health-interval 5s --health-timeout 3s --health-retries 15
+
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: ecommerce
+      DB_PASSWORD: ci-only
+      DB_NAME: ecommerce
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Type check
+        run: mypy app
+
+      - name: Testes
+        run: pytest
+
+      - name: Migrations aplicam e revertem
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Schema bate com os models
+        # Um autogenerate não-vazio significa que model e migration
+        # divergiram — o banco de um ambiente novo sairia diferente.
+        run: |
+          alembic revision --autogenerate -m "verificacao de drift"
+          if grep -q "op\." migrations/versions/*verificacao_de_drift.py; then
+            echo "::error::Models e migrations divergiram. Gere uma revision."
+            cat migrations/versions/*verificacao_de_drift.py
+            exit 1
+          fi
+          rm migrations/versions/*verificacao_de_drift.py
+
+      - name: Dependências vulneráveis
+        # O ambiente instalado, não o requirements.txt: é o que de fato roda,
+        # e o modo --requirement não funciona com o lock hash-pinned (o extra
+        # `greenlet>=1` do SQLAlchemy não tem versão fixa).
+        run: pip-audit
+
+  web:
+    name: Web (Node)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Dependências vulneráveis
+        # Falha em qualquer advisory high/critical fora de audit-allowlist.json.
+        run: npm run audit:ci
+
+  contract:
+    name: Contrato API ↔ SPA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Gerar o openapi.json sem subir banco
+        working-directory: apps/api
+        env:
+          DB_HOST: localhost
+          DB_USER: ci
+          DB_PASSWORD: ci
+          DB_NAME: ci
+        run: |
+          pip install -r requirements.txt
+          python -c "
+          import json
+          from app.main import app
+          print(json.dumps(app.openapi()))
+          " > /tmp/openapi.json
+
+      - name: Tipos do front batem com o contrato
+        # Sem isto, o backend renomeia um campo e o front só descobre em
+        # runtime — é o preço de não ter tooling de monorepo compartilhando
+        # tipos entre as duas linguagens.
+        working-directory: apps/web
+        run: |
+          npm ci
+          npx openapi-typescript /tmp/openapi.json -o /tmp/api.ts
+          if ! diff -q src/types/api.ts /tmp/api.ts > /dev/null; then
+            echo "::error::O contrato da API mudou. Rode 'npm run gen:types' em apps/web."
+            diff src/types/api.ts /tmp/api.ts || true
+            exit 1
+          fi
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [api, web]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Subir a stack
+        run: |
+          cp .env.example .env
+          sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=ci-only/' .env
+          docker compose up -d --build --wait
+
+      - name: Instalar o Playwright
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Rodar a suíte
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: http://localhost:5173
+          E2E_RESET_CMD: ../scripts/reset-orders.sh
+        run: npx playwright test
+
+      - name: Logs da stack em caso de falha
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

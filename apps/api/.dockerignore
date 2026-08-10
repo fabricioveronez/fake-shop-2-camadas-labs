@@ -1,0 +1,19 @@
+# O .venv é da máquina (macOS) e não serve dentro do container Linux.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Segredos locais. O .env define DB_HOST=localhost, que dentro do compose
+# apontaria para o próprio container — as variáveis do compose têm precedência,
+# mas não há motivo para o arquivo entrar na imagem.
+.env
+.env.*
+!.env.dev.example
+
+# tests/ e pyproject.toml ficam de fora do .dockerignore de propósito: o
+# estágio `dev` precisa deles para `make test` e `make lint`.

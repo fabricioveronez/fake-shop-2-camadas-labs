@@ -1,0 +1,9 @@
+fastapi
+# [email] traz o email-validator, exigido pelo EmailStr do checkout
+pydantic[email]
+uvicorn[standard]
+sqlalchemy>=2.0
+psycopg[binary]
+alembic
+pydantic-settings
+prometheus-fastapi-instrumentator

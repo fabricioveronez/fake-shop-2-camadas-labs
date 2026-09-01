@@ -1,0 +1,97 @@
+# PostgreSQL do fake-shop.
+#
+# StatefulSet e nao Deployment por causa do volumeClaimTemplate: o PVC segue o
+# pod pela identidade, e um reschedule nao perde o banco.
+#
+# As credenciais ficam num Secret porque e o lugar certo delas — e porque o
+# guard do harness nega leitura de Secret incondicionalmente, o que garante que
+# nenhum diagnostico do agente possa depender de ler senha.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fake-shop-db
+  namespace: fake-shop
+type: Opaque
+stringData:
+  POSTGRES_DB: fakeshop
+  POSTGRES_USER: fakeshop
+  POSTGRES_PASSWORD: fakeshop-lab-password
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: fake-shop
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: fake-shop-db
+          env:
+            # O diretorio de dados precisa ser um subdiretorio do mount: o
+            # volume traz um lost+found que faz o initdb recusar o diretorio.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "fakeshop", "-d", "fakeshop"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "fakeshop", "-d", "fakeshop"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

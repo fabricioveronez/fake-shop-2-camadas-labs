@@ -1,0 +1,96 @@
+# Front do fake-shop (SPA React servido por nginx-unprivileged na 8080).
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-shop-web
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-web
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  selector:
+    app.kubernetes.io/name: fake-shop-web
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-shop-web
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-web
+    app.kubernetes.io/part-of: fake-shop
+  annotations:
+    labs.k8s/commit: "183c36b988f0e2eccb77709c1355213eccb77c9f"
+    labs.k8s/source: https://github.com/fabricioveronez/fake-shop-2-camadas-labs
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fake-shop-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fake-shop-web
+        app.kubernetes.io/part-of: fake-shop
+      annotations:
+        labs.k8s/commit: "183c36b988f0e2eccb77709c1355213eccb77c9f"
+        # Muda quando o ConfigMap muda, forcando novo rollout. Sem isso, editar
+        # a config nao reinicia os pods e o nginx segue com o arquivo antigo.
+        labs.k8s/config: fake-shop-web-nginx
+    spec:
+      containers:
+        - name: web
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-web:183c36b
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet: { path: /index.html, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /index.html, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+      volumes:
+        # O nome do ConfigMap aqui e exatamente o ponto de falha do cenario
+        # config-drift: renomear o ConfigMap sem atualizar esta referencia
+        # deixa o pod preso em ContainerCreating com MountVolume.SetUp failed.
+        - name: nginx-conf
+          configMap:
+            name: fake-shop-web-nginx
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fake-shop
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: fake-shop.localtest.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fake-shop-web
+                port:
+                  number: 80

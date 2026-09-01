@@ -1,0 +1,13 @@
+# Namespace do fake-shop.
+#
+# Um namespace por aplicacao nao e estetica: o schema do incident response
+# harness (labs-pos/schemas/project.schema.json) exige que cada Linear Project
+# resolva exatamente um namespace, e o hook PreToolUse nega qualquer chamada
+# Kubernetes que aponte para outro. O namespace e a fronteira de investigacao.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fake-shop
+  labels:
+    app.kubernetes.io/part-of: fake-shop
+    labs.k8s/project: fake-shop

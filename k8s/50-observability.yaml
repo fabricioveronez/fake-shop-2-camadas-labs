@@ -1,0 +1,84 @@
+# Observabilidade do fake-shop.
+#
+# O ServiceMonitor e capturado por qualquer release graças ao
+# serviceMonitorSelectorNilUsesHelmValues: false do kube-prometheus-stack
+# (labs-k8s/values/kube-prometheus-stack.yaml) — nao e preciso label de release.
+#
+# So a API expoe metricas: o nginx do front devolve 404 em /metrics de proposito.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fake-shop-api
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-api
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fake-shop-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# Alertas. O harness nao exige PrometheusRule em lugar nenhum, mas a trilha de
+# observabilidade da skill incident-response manda coletar "dashboards, alerts,
+# Prometheus and Loki" — sem regra nenhuma, essa trilha volta vazia.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fake-shop
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  groups:
+    - name: fake-shop.rules
+      rules:
+        - alert: FakeShopApiHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{namespace="fake-shop",status=~"5.."}[5m]))
+              /
+            clamp_min(sum(rate(http_requests_total{namespace="fake-shop"}[5m])), 0.001)
+              > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            project: fake-shop
+          annotations:
+            summary: "fake-shop: mais de 5% das respostas sao 5xx"
+            description: "Taxa de erro em {{ $value | humanizePercentage }} nos ultimos 5 minutos."
+
+        - alert: FakeShopApiHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="fake-shop"}[5m]))
+            ) > 1
+          for: 5m
+          labels:
+            severity: warning
+            project: fake-shop
+          annotations:
+            summary: "fake-shop: p95 acima de 1s"
+
+        - alert: FakeShopDeploymentDegraded
+          expr: |
+            kube_deployment_status_replicas_available{namespace="fake-shop"}
+              < kube_deployment_spec_replicas{namespace="fake-shop"}
+          for: 5m
+          labels:
+            severity: critical
+            project: fake-shop
+          annotations:
+            summary: "fake-shop: {{ $labels.deployment }} com replicas faltando"
+
+        - alert: FakeShopPodRestarting
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="fake-shop"}[15m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+            project: fake-shop
+          annotations:
+            summary: "fake-shop: {{ $labels.pod }} reiniciando"

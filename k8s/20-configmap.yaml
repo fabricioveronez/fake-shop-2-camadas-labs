@@ -1,0 +1,76 @@
+# Configuracao de runtime do fake-shop.
+#
+# O nginx.conf sai da imagem e vem para ca por dois motivos.
+#
+# 1. O arquivo assado na imagem faz `proxy_pass http://api:8000/api/` com
+#    hostname literal. O nginx resolve nomes de upstream UMA VEZ, no start, e
+#    aborta se a resolucao falhar — ou seja, se o Service `api` ainda nao
+#    existir quando o pod web subir, o container nao inicia. Com `resolver` +
+#    proxy_pass por variavel, a resolucao vira preguicosa e reavaliada.
+#
+# 2. Assim este ConfigMap passa a ser peca load-bearing de verdade. Um cenario
+#    de config drift que renomeia um ConfigMap decorativo nao prova nada; este
+#    aqui derruba a aplicacao, que e o comportamento que o incidente precisa ter.
+#
+# 10.96.0.10 e o ClusterIP do kube-dns no CIDR default (10.96.0.0/16) usado por
+# kind e kubeadm. A diretiva `resolver` exige endereco, nao aceita nome.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fake-shop-web-nginx
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-web
+    app.kubernetes.io/part-of: fake-shop
+data:
+  default.conf: |
+    resolver 10.96.0.10 valid=10s ipv6=off;
+
+    server {
+        listen 8080;
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/css text/plain application/javascript application/json image/svg+xml;
+
+        set $api_upstream http://api.fake-shop.svc.cluster.local:8000;
+
+        location /assets/ {
+            add_header Cache-Control "public, max-age=31536000, immutable";
+        }
+
+        location = /index.html {
+            add_header Cache-Control "no-cache";
+        }
+
+        # proxy_pass com variavel e SEM componente de path repassa a URI
+        # original intacta — /api/products chega na API como /api/products.
+        # Acrescentar um path aqui quebraria isso: com variavel, o nginx nao
+        # substitui o prefixo do location, ele usa o path literal.
+        location /api/ {
+            proxy_pass $api_upstream;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location /static/ {
+            proxy_pass $api_upstream;
+            proxy_set_header Host $host;
+            add_header Cache-Control "public, max-age=86400";
+        }
+
+        location = /metrics {
+            return 404;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }

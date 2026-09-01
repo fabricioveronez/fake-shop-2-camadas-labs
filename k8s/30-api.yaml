@@ -1,0 +1,135 @@
+# API do fake-shop (FastAPI/uvicorn).
+#
+# O Service se chama "api" de proposito: e o hostname que o nginx do front
+# procura. Ver k8s/20-configmap.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-api
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  selector:
+    app.kubernetes.io/name: fake-shop-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-shop-api
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-api
+    app.kubernetes.io/part-of: fake-shop
+  annotations:
+    # Proveniencia. A skill incident-code-remediation exige resolver o commit
+    # implantado a partir da imagem antes de diagnosticar codigo — sem esse
+    # mapeamento ela para e pede escolha manual de revisao base. A tag ja e o
+    # short SHA; estas anotacoes tornam o vinculo explicito e legivel.
+    labs.k8s/commit: "183c36b988f0e2eccb77709c1355213eccb77c9f"
+    labs.k8s/source: https://github.com/fabricioveronez/fake-shop-2-camadas-labs
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fake-shop-api
+  template:
+    metadata:
+      labels:
+        # O Alloy transforma app.kubernetes.io/name no label "app" do Loki.
+        app.kubernetes.io/name: fake-shop-api
+        app.kubernetes.io/part-of: fake-shop
+      annotations:
+        labs.k8s/commit: "183c36b988f0e2eccb77709c1355213eccb77c9f"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: api
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:183c36b
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: postgres.fake-shop.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_DB } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_PASSWORD } }
+            - name: ENVIRONMENT
+              value: prod
+          # Liveness nao toca o banco: se o Postgres cair, matar os pods da API
+          # em loop troca um incidente diagnosticavel por um crashloop opaco.
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # Readiness toca (select 1): sem banco a API sai do Service, e o
+          # sintoma aparece como 503 no ingress, nao como erro silencioso.
+          readinessProbe:
+            httpGet: { path: /api/health/ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+# Migration + seed como Job, nao como initContainer da API: com 2 replicas,
+# N containers rodando "alembic upgrade head" ao mesmo tempo disputam lock.
+# Usa a MESMA imagem da API — o estagio runtime do Dockerfile ja copia
+# alembic.ini e migrations/.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fake-shop-migrate-183c36b
+  namespace: fake-shop
+  labels:
+    app.kubernetes.io/name: fake-shop-migrate
+    app.kubernetes.io/part-of: fake-shop
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fake-shop-migrate
+        app.kubernetes.io/part-of: fake-shop
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: migrate
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:183c36b
+          imagePullPolicy: IfNotPresent
+          # O seed e idempotente: nao faz nada se ja houver produto.
+          command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+          env:
+            - name: DB_HOST
+              value: postgres.fake-shop.svc.cluster.local
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_DB } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_USER } }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: fake-shop-db, key: POSTGRES_PASSWORD } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }

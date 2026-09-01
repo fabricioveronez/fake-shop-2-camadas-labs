@@ -24,7 +24,7 @@ metadata:
     app.kubernetes.io/name: fake-shop-web
     app.kubernetes.io/part-of: fake-shop
   annotations:
-    labs.k8s/commit: "1a233a64571a19a57ebe51f626c70dbac9b425bb"
+    labs.k8s/commit: "2fa5641a0cc7791549ec1e893a57537b57fb5783"
     labs.k8s/source: https://github.com/fabricioveronez/fake-shop-2-camadas-labs
 spec:
   replicas: 2
@@ -37,14 +37,14 @@ spec:
         app.kubernetes.io/name: fake-shop-web
         app.kubernetes.io/part-of: fake-shop
       annotations:
-        labs.k8s/commit: "1a233a64571a19a57ebe51f626c70dbac9b425bb"
+        labs.k8s/commit: "2fa5641a0cc7791549ec1e893a57537b57fb5783"
         # Muda quando o ConfigMap muda, forcando novo rollout. Sem isso, editar
         # a config nao reinicia os pods e o nginx segue com o arquivo antigo.
         labs.k8s/config: fake-shop-web-nginx
     spec:
       containers:
         - name: web
-          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-web:1a233a6
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-web:2fa5641
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -31,7 +31,7 @@ metadata:
     # implantado a partir da imagem antes de diagnosticar codigo — sem esse
     # mapeamento ela para e pede escolha manual de revisao base. A tag ja e o
     # short SHA; estas anotacoes tornam o vinculo explicito e legivel.
-    labs.k8s/commit: "af8cb179a16f285e55e905ba840ff0cca7028101"
+    labs.k8s/commit: "d5cf70ba6943f81469dc0391f0afafa105f54b58"
     labs.k8s/source: https://github.com/fabricioveronez/fake-shop-2-camadas-labs
 spec:
   replicas: 2
@@ -45,14 +45,14 @@ spec:
         app.kubernetes.io/name: fake-shop-api
         app.kubernetes.io/part-of: fake-shop
       annotations:
-        labs.k8s/commit: "af8cb179a16f285e55e905ba840ff0cca7028101"
+        labs.k8s/commit: "d5cf70ba6943f81469dc0391f0afafa105f54b58"
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
       containers:
         - name: api
-          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:af8cb17
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:d5cf70b
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -96,7 +96,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: fake-shop-migrate-af8cb17
+  name: fake-shop-migrate-d5cf70b
   namespace: fake-shop
   labels:
     app.kubernetes.io/name: fake-shop-migrate
@@ -135,7 +135,7 @@ spec:
             limits: { memory: 64Mi }
       containers:
         - name: migrate
-          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:af8cb17
+          image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:d5cf70b
           imagePullPolicy: IfNotPresent
           # O seed e idempotente: nao faz nada se ja houver produto.
           command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]

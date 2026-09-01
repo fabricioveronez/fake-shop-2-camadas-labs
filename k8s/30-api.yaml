@@ -113,6 +113,26 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
+      # Sem isto o Job falha algumas vezes ate o Postgres aceitar conexao e o
+      # backoff do Kubernetes cuida do resto — funciona, mas polui o baseline
+      # com falhas que nao sao incidente.
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            # -U explicito: o securityContext do pod vale para o initContainer,
+            # e o UID 10001 nao existe no /etc/passwd da imagem do Postgres —
+            # sem usuario do SO, o pg_isready devolve "no attempt" para sempre.
+            - |
+              until pg_isready -h postgres.fake-shop.svc.cluster.local -p 5432 -U fakeshop; do
+                echo "aguardando postgres..."
+                sleep 2
+              done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
       containers:
         - name: migrate
           image: docker.io/fabricioveronez/fake-shop-2-camadas-labs-api:169e326
